@@ -1,0 +1,80 @@
+%%  part 4
+clear all
+close all
+s = tf('s');
+
+load 'GpPlantFrequencyData';  % loads the experimental data on the 
+G = 0.002154;
+k = 12698;
+w = 926.8;
+m = k/w^2;
+b = sqrt(1/G^2 -(k-m*w^2)^2)/w;
+Gp = tf(1,[m b k]);
+[~,~,wout_old] =bode(Gp);
+w = vertcat(wout_old,transpose(10^4:10^4:10^5));
+[mag,~,wout] =bode(Gp,w);
+
+subplot(2,1,1)
+loglog(ww,Gpmag,squeeze(wout),squeeze(mag))
+
+subplot(2,1,2)
+semilogx(ww,Gpphase)
+%% fit high freq 
+wz1 = 6.001e+4;
+wp1 = 7.985e+4;
+wz2 = 1.305e+5;
+wp2 = 1.608e+5;
+wp3 = 2.802e+5;
+wz3 = 2.297e+5;
+
+wz = [wz1 wz2 wz3];
+wp = [wp1 wp2 wp3];
+za = zeros(1,3);
+zb = zeros(1,3);
+pa = zeros(1,3);
+pb = zeros(1,3);
+
+magz =[2.35e-9 1.153e-7 1.464e-9];
+magp =[ 6.734e-8 4.575e-8 4.86e-10];
+
+gain = 1;
+Gp_new = Gp;
+% Gpnew*gain
+for i=1:1 %i =1:2?
+    [mag,~,~] = bode(Gp_new,wz(i));  %find magnitude
+    bz = (magz(i)/mag)/2; %damping
+%     za(i) = -bz*wz(i)+sqrt(1-bz^2)*wz(i)*1j; % pairs of a,b
+%     zb(i) = conj(za(i));
+    Gp_new = Gp_new*tf([1 2*bz*wz(i) wz(i)^2])/wz(i)^2;
+    %gain = gain/(abs(za(i))*abs(zb(i)));
+    %Gp_new = Gp_new*(s-za(i))*(s-zb(i))*gain;
+    
+    [mag,~,~] = bode(Gp_new,wp(i));
+    bp = mag/(magp(i)*2);
+     
+%      pa(i) = -bp*wp(i)+sqrt(1-bp^2)*wp(i)*1j; % pairs of a,b
+%      pb(i) = conj(pa(i));
+%     
+%     gain = gain/(abs(pa(i))*abs(pb(i)));
+%      
+%     Gp_new = Gp_new*gain/((s-pa(i))*(s-pb(i)));
+    Gp_new = Gp_new*wp(i)^2*tf(1,[1 2*bp*wp(i) wp(i)^2]);
+end
+
+
+% [mag,~,~] = bode(Gp,wz1);
+% bz1 = (2.35e-9/mag)/2;
+% z1a = -bz1*wz1+sqrt(1-bz1^2)*wz1*1j; % pairs of a,b
+% z1b = conj(z1a);
+%Gp_new = Gp*(s-z1a)*(s-z1b)/(abs(z1a)^2);%Gp*zpk([z1a z1b],[],1);
+
+%Gp_new = Gp*zpk([za zb],[],1/gain);
+
+%% plots overlaid Gp_new and Gp 
+[mag,phase,wout] =bode(Gp_new);
+subplot(2,1,1)
+loglog(ww,Gpmag,squeeze(wout),squeeze(mag))
+
+subplot(2,1,2)
+semilogx(ww,Gpphase,squeeze(wout),squeeze(phase))
+
