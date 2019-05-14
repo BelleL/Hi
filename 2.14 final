@@ -33,7 +33,7 @@ magz =[2.35e-9, 1.464e-9,4.86e-10];
 magp =[1.153e-7,6.734e-8,4.575e-8 ];
 
 bz = [0.035,0.03,0.0094];%bz = [0.0625,0.0826,0.0094];%bz = zeros(1,3);
-bp = [0.025,0.0219,0.01]%bp = [0.0363,0.0219,0.01];%bp = zeros(1,3);
+bp = [0.025,0.0219,0.01];%bp = [0.0363,0.0219,0.01];%bp = zeros(1,3);
 
 Gp_new = ss(Gp); % state space of Gp and updates every loop
 for i=1:2%i =1:2?
@@ -73,4 +73,133 @@ loglog(ww,Gpmag,squeeze(wout),squeeze(mag))
 
 subplot(2,1,2)
 semilogx(ww,Gpphase,squeeze(wout),squeeze(phase))
+
+%% controller - tf/zpk domain
+%1. find wc 
+% 2. find magnitude& phase at wc
+% 3. find Ki --> add lead/lag compensator
+% 4. add notch filter to get rid of complex pole peak
+% 5. add low pass filter to get rid of high freq dynamics
+w_ref = 4000;
+w_n = 5*10^4;
+w_c = sqrt(w_ref*w_n); %crossover
+
+Ki = w_c/5; % previously wc/3 to wc/10
+K = 2.5e+8;
+PI = zpk(tf([1 Ki],[1 0]));
+% figure
+% bode(PI)
+%% notch
+w_res = wp1;
+zetaz = 0.05;
+zetap = 1;
+notch = zpk(tf([1/w_res^2 2*zetaz/w_res 1],[1/w_res^2 2*zetap/w_res 1]));
+% figure
+% bode(notch)
+%% lowpass (2nd order)
+w_cut = 5.85e+4;
+lowpass = zpk(tf([1],[1 2*w_cut w_cut^2]));
+% figure
+% bode(lowpass)
+%% lead (doubled below)
+alpha = 4.1423;
+tau = 1/(w_c*sqrt(alpha));
+lead = zpk(tf([alpha*tau 1],[tau 1]));
+% figure
+% bode(lead)
+
+%% AFC
+A1 = tf([K1 0],[1 0 w_ref^2]);
+PI_AFC =A1+PI;
+%% NO AFC
+AFC_EN=0;
+c=5;       %coil resistance
+Lc=3e-4;    %coil inductance
+Kf=15;      %motor constant
+R1=10e3;    %value of resistance R1
+Rs=0.2;     %value of sense resistance
+Ga=0.6;    %closed loop low-freq gain of the current amplifier
+G1=6e5;     %capacitive probe sensor's gain
+
+Gp = zpk(tf(Gp_new)); % fitted mechanical plant Gp_fit=X/F
+if(AFC_EN) % Set AFC_EN=0 above for no AFC, set to AFC_EN=1 for using AFC
+    C_mech = K*PI_AFC*notch*lowpass*lead*lead*lead; % mechanical controller V_set/V_e with AFC
+                % this is used only by 2.140 students
+else
+    % mechanical controller V_set/V_e with no AFC
+                % this is used by both 2.14 and 2.140 students
+    C_mech = K*PI*notch*lowpass*lead*lead*lead; % mechanical controller V_set/V_e with AFC
+
+end
+L_mech = C_mech*Ga*Kf*Gp*G1; %mechanical loop return ratio
+
+% ss domain - doesn't work
+[mag,phase,~] = bode(L_mech, w_c)
+%% controller plotting template
+close all
+% Plot the loop-shaping results for the electrical loop
+[Pm Pp]=bode(Gp,ww); Pm=Pm(:); Pp=Pp(:);
+[Cm Cp]=bode(C_mech,ww); Cm=Cm(:); Cp=Cp(:);
+[Lm Lp]=bode(L_mech,ww); Lm=Lm(:); Lp=Lp(:);
+figure;
+subplot(2,1,1)
+loglog(ww,Gpmag,'Linewidth',2);
+hold on;
+loglog(ww,Pm,'g',ww,Cm,'r',ww,Lm,'k');
+legend('Gp','Gp_f_i_t','C','L')
+title('Mech. Loop Shaping Design')
+ylabel('Magnitude');
+xlabel('\omega [rad/s]');
+grid on;
+subplot(2,1,2)
+semilogx(ww,Gpphase,'Linewidth',2);
+hold on;
+semilogx(ww,Pp,'g',ww,Cp,'r',ww,Lp,'k');
+ylabel('Phase [deg]');
+xlabel('\omega [rad/s]');
+grid on;
+
+figure; 
+nyquist(L_mech);        %Nyquist Plot
+
+L_mechS=ss(L_mech);     % the transfer function is converted to state space
+                        % to allow arithmetic with the delay term
+S=feedback(1,L_mechS);  %sensitivity transfer function
+figure;
+bode(S)                 %Bode Plot of the sensitivity
+title('sensitivity')
+grid on;
+%% Simulate Time Response
+wr=4e3; %frequency of the reference signal [rad/s]
+fr=wr/(2*pi); %frequency of the referen     ce signal [Hz]
+t=0:(1/fr/100):(1/fr)*100; %simulation time = 100 cycles
+x_ref=1e-5*sin(wr*t); % position reference signal (x_ref) [m]
+
+CL=feedback(L_mechS,1); %closed loop x/x_ref transfer function
+figure;
+x=lsim(CL,x_ref,t); %simulate the response to x_ref
+e=x'-x_ref; %tracking error
+plot(t,x_ref*1e9,t,x*1e9,t,e*1e9);
+xlim([.95*t(end) t(end)])
+legend('x_{ref}','x','e');
+title('Response to Reference')
+ylabel('Position [nm]')
+xlabel('time [s]')
+grid on;
+
+wn=5e4; %frequency of the noise signal [rad/s]
+fn=wn/(2*pi); %frequency of the noise signal [Hz]
+t=0:(1/fn/100):(1/fn)*100; %simulation time = 100 cycles
+Vn=4e-2*sin(wn*t); % noise signal (x_ref) [V]
+CLn=(-L_mechS/G1)/(1+L_mechS); % x/Vn transfer function
+figure;
+e=lsim(CLn,Vn,t); %simulate response to noise
+plot(t,Vn/G1*1e9,t,e*1e9);
+xlim([.95*t(end) t(end)])
+legend('noise','error');
+title('Response to Reference')
+ylabel('Position [nm]')
+xlabel('time [s]')
+grid on;
+
 
